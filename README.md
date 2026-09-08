@@ -1,6 +1,6 @@
 # Playwright Automation
 
-End-to-end UI test automation using [Playwright Test](https://playwright.dev/) with TypeScript/JavaScript.
+All the Playwright implementations. End-to-end UI test automation using [Playwright Test](https://playwright.dev/) with TypeScript/JavaScript.
 
 ## Prerequisites
 
