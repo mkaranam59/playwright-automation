@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Playwright Talks to a Browser</title>
+<style>
+  /* ============ 1. CUSTOM PROPERTIES ============ */
+  :root{
+    --bg-void:#060a10;
+    --bg-card:#10151f;
+    --bg-card-alt:#141a26;
+    --border:#212a3a;
+    --border-strong:#2c3850;
+    --text-primary:#e8edf5;
+    --text-secondary:#aebfd8;
+    --text-muted:#7c8caa;
+
+    --client:#4cc9f0;
+    --client-rgb:76,201,240;
+    --driver:#b388ff;
+    --driver-rgb:179,136,255;
+    --browser:#ffb454;
+    --browser-rgb:255,180,84;
+
+    --success:#4ade80;
+    --danger:#ff6b6b;
+    --packet:#ffe066;
+
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --font-mono:ui-monospace,SFMono-Regular,"Cascadia Code",Consolas,"Liberation Mono",Menlo,monospace;
+
+    --space-1:.25rem; --space-2:.5rem; --space-3:.75rem; --space-4:1rem;
+    --space-5:1.5rem; --space-6:2rem; --space-8:3rem; --space-10:4.5rem; --space-12:6rem;
+
+    --ease-out:cubic-bezier(.16,1,.3,1);
+    --ease-pop:cubic-bezier(.34,1.56,.64,1);
+  }
+
+  /* ============ 2. RESET / BASE ============ */
+  *,*::before,*::after{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  body{
+    margin:0;
+    background:var(--bg-void);
+    color:var(--text-primary);
+    font-family:var(--font-sans);
+    line-height:1.65;
+    overflow-x:hidden;
+  }
+  h1,h2,h3,p,ul,figure{ margin:0; }
+  ul{ padding:0; list-style:none; }
+  img,svg{ display:block; max-width:100%; }
+
+  /* ============ 3. LAYOUT PRIMITIVES ============ */
+  .container{ max-width:1120px; margin:0 auto; padding-inline:1.25rem; }
+  .section{ padding-block:2rem; position:relative; }
+  .section--alt-a{ background:radial-gradient(circle at 50% 0%, #0d1420 0%, #060a10 60%); }
+  .section--alt-b{ background:radial-gradient(circle at 50% 100%, #0d1420 0%, #060a10 60%); }
+  .grid-3{ display:grid; grid-template-columns:1fr; gap:1.5rem; }
+  .eyebrow{
+    display:inline-block; font-size:.75rem; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--text-muted); margin-bottom:var(--space-3);
+  }
+  .step-heading{ font-size:clamp(1.5rem,2.5vw + 1rem,2.25rem); font-weight:800; margin-bottom:var(--space-4); }
+  .step-lede{ color:var(--text-secondary); max-width:60ch; margin-bottom:var(--space-6); }
+  .step-badge{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:2.75rem; height:2.75rem; border-radius:999px;
+    font-family:var(--font-mono); font-weight:700; font-size:1rem;
+    border:1px solid var(--border-strong); color:var(--text-secondary);
+    margin-bottom:var(--space-4);
+  }
+
+  /* ============ 4. TYPOGRAPHY ============ */
+  .hero h1{ font-size:clamp(2.1rem,5vw + 1rem,4rem); font-weight:800; letter-spacing:-.02em; }
+  .section h2{ font-size:clamp(1.5rem,2.5vw + 1rem,2.25rem); font-weight:800; }
+  .mono{ font-family:var(--font-mono); }
+  code.mono{
+    color:#7fe7ff;
+    background:rgba(76,201,240,.12);
+    border:1px solid rgba(76,201,240,.28);
+    padding:.15em .5em;
+    border-radius:6px;
+    font-size:.92em;
+    white-space:nowrap;
+  }
+  .tok-punc{ color:var(--text-secondary); }
+  .tok-key{ color:var(--client); }
+  .tok-string{ color:var(--success); }
+  .tok-method{ color:var(--browser); }
+  .tok-comment{ color:var(--text-muted); font-style:italic; }
+
+  /* ============ 5. HERO ============ */
+  .hero{
+    position:relative;
+    min-height:60vh;
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
+    padding-block:4rem 2.5rem;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(76,201,240,.10), transparent 40%),
+      radial-gradient(circle at 80% 30%, rgba(179,136,255,.10), transparent 40%),
+      radial-gradient(circle at 50% 90%, rgba(255,180,84,.08), transparent 45%),
+      var(--bg-void);
+    overflow:hidden;
+  }
+  .hero::before{
+    content:""; position:absolute; inset:0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+    background-size:48px 48px;
+    mask-image:radial-gradient(circle at 30% 30%, black 0%, transparent 70%);
+    pointer-events:none;
+  }
+  .hero-inner{ position:relative; max-width:760px; }
+  .hero .eyebrow{ color:var(--client); }
+  .hero p.subhead{ color:var(--text-secondary); font-size:clamp(1rem,1.2vw + .8rem,1.25rem); margin-top:var(--space-4); max-width:52ch; }
+  .scroll-cue{
+    margin-top:var(--space-6);
+    display:flex; align-items:center; gap:var(--space-2);
+    color:var(--text-muted); font-size:.85rem; font-family:var(--font-mono);
+  }
+  .scroll-cue svg{ animation:bob 1.8s ease-in-out infinite; }
+  @keyframes bob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(6px); } }
+
+  /* ============ 6. LAYER CARDS (intro) ============ */
+  .layer-card{
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:var(--space-5);
+    transition:border-color .3s var(--ease-out), box-shadow .3s var(--ease-out), filter .6s var(--ease-out), opacity .6s var(--ease-out);
+  }
+  .layer-card[data-layer="client"]{ border-top:3px solid var(--client); }
+  .layer-card[data-layer="driver"]{ border-top:3px solid var(--driver); }
+  .layer-card[data-layer="browser"]{ border-top:3px solid var(--browser); }
+  .layer-card:hover{ border-color:var(--border-strong); box-shadow:0 0 24px rgba(var(--layer-rgb,255,255,255),.15); }
+  .layer-card[data-layer="client"]:hover{ --layer-rgb:var(--client-rgb); }
+  .layer-card[data-layer="driver"]:hover{ --layer-rgb:var(--driver-rgb); }
+  .layer-card[data-layer="browser"]:hover{ --layer-rgb:var(--browser-rgb); }
+  .layer-card .tag{
+    display:inline-block; font-family:var(--font-mono); font-size:.7rem; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase; padding:.2rem .55rem; border-radius:999px;
+    margin-bottom:var(--space-3); border:1px solid currentColor;
+  }
+  .layer-card[data-layer="client"] .tag{ color:var(--client); }
+  .layer-card[data-layer="driver"] .tag{ color:var(--driver); }
+  .layer-card[data-layer="browser"] .tag{ color:var(--browser); }
+  .layer-card h3{ font-size:1.15rem; font-weight:700; margin-bottom:var(--space-2); }
+  .layer-card p{ color:var(--text-secondary); font-size:.95rem; }
+  .layer-card.is-dormant{ filter:grayscale(.5) opacity(.75); }
+
+  /* ============ 7. DIAGRAM: NODES / CONNECTORS / PACKET ============ */
+  .diagram{
+    position:relative;
+    background:var(--bg-card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:var(--space-6) var(--space-4);
+    margin-block:var(--space-6);
+  }
+  .diagram-row{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:var(--space-8);
+    position:relative;
+  }
+  .diagram-node{
+    display:flex; flex-direction:column; align-items:center; text-align:center; gap:var(--space-2);
+    position:relative; z-index:2;
+  }
+  .diagram-node .dot{
+    width:2.75rem; height:2.75rem; border-radius:999px;
+    border:2px solid var(--border-strong);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-weight:700; font-size:.75rem;
+    background:var(--bg-card-alt);
+    transition:box-shadow .5s var(--ease-out), border-color .5s var(--ease-out), filter .6s var(--ease-out), transform .5s var(--ease-out), opacity .6s var(--ease-out);
+  }
+  .diagram-node[data-node="client"] .dot{ border-color:var(--client); color:var(--client); }
+  .diagram-node[data-node="driver"] .dot{ border-color:var(--driver); color:var(--driver); }
+  .diagram-node[data-node="browser"] .dot{ border-color:var(--browser); color:var(--browser); }
+  .diagram-node .label{ font-size:.8rem; color:var(--text-secondary); font-family:var(--font-mono); }
+  .diagram-node.is-dormant .dot{ filter:grayscale(.5) opacity(.75); }
+  .step-scene.is-active .diagram-node.boot-in .dot{
+    filter:none; opacity:1; box-shadow:0 0 22px rgba(var(--browser-rgb),.45); transform:scale(1.05);
+  }
+  .step-scene.is-active .diagram-node.power-down .dot{
+    filter:grayscale(1) opacity(.35); transform:scale(.85);
+    transition:filter .8s var(--ease-out) .9s, transform .8s var(--ease-out) .9s, opacity .8s var(--ease-out) .9s;
+  }
+  .step-scene.is-active .diagram-node.fade-out .dot{
+    opacity:.5; transition:opacity .8s var(--ease-out) 1.3s;
+  }
+
+  .connector{
+    position:absolute; top:1.375rem; left:0; right:0; height:2px;
+    display:none;
+  }
+  .connector-line{
+    position:absolute; top:0; height:2px; background:var(--border-strong);
+  }
+  .connector-label{
+    position:absolute; top:-1.4rem; font-family:var(--font-mono); font-size:.68rem;
+    color:var(--text-muted); white-space:nowrap;
+  }
+  .packet{
+    position:absolute; top:-4px; width:10px; height:10px; border-radius:999px;
+    background:var(--packet); box-shadow:0 0 10px 2px rgba(255,224,102,.7);
+    opacity:0; left:0;
+  }
+  .step-scene.is-active .packet{ animation-fill-mode:forwards; animation-timing-function:ease; }
+  .step-scene.is-active .packet[data-leg="cd"]{ animation-name:travel-cd; animation-duration:.9s; }
+  .step-scene.is-active .packet[data-leg="dc"]{ animation-name:travel-dc; animation-duration:.9s; animation-delay:1s; }
+  .step-scene.is-active .packet[data-leg="db"]{ animation-name:travel-db; animation-duration:.9s; animation-delay:.2s; }
+  .step-scene.is-active .packet[data-leg="bd"]{ animation-name:travel-bd; animation-duration:.9s; }
+  .step-scene.is-active .packet[data-leg="cd-seq"]{ animation-name:travel-cd; animation-duration:.8s; animation-delay:0s; }
+  .step-scene.is-active .packet[data-leg="db-seq"]{ animation-name:travel-db; animation-duration:.8s; animation-delay:.8s; }
+  .step-scene.is-active .packet[data-leg="bd-seq"]{ animation-name:travel-bd; animation-duration:.8s; animation-delay:0s; }
+  .step-scene.is-active .packet[data-leg="dc-seq"]{ animation-name:travel-dc; animation-duration:.8s; animation-delay:.9s; }
+  .step-scene.is-active .packet[data-leg="close"]{ animation-name:travel-cd; animation-duration:.8s; }
+  .step-scene.is-active .packet[data-leg="sigterm"]{ animation-name:travel-db-danger; animation-duration:.8s; animation-delay:.6s; }
+
+  @keyframes travel-cd{ 0%{ opacity:0; left:0%; } 10%{ opacity:1; } 90%{ opacity:1; } 100%{ opacity:0; left:calc(50% - 5px); } }
+  @keyframes travel-dc{ 0%{ opacity:0; left:calc(50% - 5px); } 10%{ opacity:1; } 90%{ opacity:1; } 100%{ opacity:0; left:0%; } }
+  @keyframes travel-db{ 0%{ opacity:0; left:calc(50% - 5px); } 10%{ opacity:1; } 90%{ opacity:1; } 100%{ opacity:0; left:calc(100% - 10px); } }
+  @keyframes travel-bd{ 0%{ opacity:0; left:calc(100% - 10px); } 10%{ opacity:1; } 90%{ opacity:1; } 100%{ opacity:0; left:calc(50% - 5px); } }
+  @keyframes travel-db-danger{ 0%{ opacity:0; left:calc(50% - 5px); background:var(--danger); box-shadow:0 0 10px 2px rgba(255,107,107,.7); }
+    10%{ opacity:1; } 90%{ opacity:1; } 100%{ opacity:0; left:calc(100% - 10px); background:var(--danger); } }
+
+  .diagram-note{
+    text-align:center; margin-top:var(--space-4);
+    font-size:.85rem; letter-spacing:.01em; font-family:var(--font-mono);
+    color:#c9b3ff;
+    text-shadow:0 0 16px rgba(179,136,255,.35);
+  }
+
+  /* ============ 8. CODE CARD ============ */
+  .code-card{
+    background:var(--bg-card-alt);
+    border:1px solid var(--border);
+    border-left:3px solid var(--border-strong);
+    border-radius:10px;
+    padding:var(--space-4) var(--space-5);
+    font-family:var(--font-mono);
+    font-size:.88rem;
+    overflow-x:auto;
+    white-space:pre;
+    margin-block:var(--space-4);
+  }
+  .code-card.accent-client{ border-left-color:var(--client); }
+  .code-card.accent-driver{ border-left-color:var(--driver); }
+  .code-card.accent-browser{ border-left-color:var(--browser); }
+  .code-card .code-label{
+    display:block; font-size:.68rem; color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:.06em; margin-bottom:var(--space-2);
+  }
+  .code-card.compact{ padding:.6rem .9rem; font-size:.82rem; margin-block:var(--space-3) 0; }
+
+  .terminal-line{
+    display:inline-block; overflow:hidden; white-space:nowrap; width:0; max-width:100%;
+    border-right:2px solid var(--client); font-family:var(--font-mono);
+  }
+  .step-scene.is-active .terminal-line{
+    animation:type 1.1s steps(22) forwards, blink .8s step-end infinite;
+  }
+  @keyframes type{ from{ width:0; } to{ width:22ch; } }
+  @keyframes blink{ 50%{ border-color:transparent; } }
+
+  /* ============ 9. CHECKLIST ============ */
+  .checklist{ display:flex; flex-direction:column; gap:var(--space-3); margin-top:var(--space-4); }
+  .checklist li{
+    display:flex; align-items:center; gap:var(--space-3);
+    font-size:.9rem; color:var(--text-secondary);
+    opacity:.4; transition:opacity .4s var(--ease-out);
+  }
+  .step-scene.is-active .checklist li{ opacity:1; transition-delay:calc(var(--i, 0) * 180ms + .6s); }
+  .checklist .check-icon{ flex:none; }
+  .checklist .check-icon circle{ fill:none; stroke:var(--border-strong); stroke-width:1.5; }
+  .checklist .check-icon path{
+    fill:none; stroke:var(--success); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
+    stroke-dasharray:20; stroke-dashoffset:20; transition:stroke-dashoffset .4s var(--ease-out);
+  }
+  .step-scene.is-active .checklist li .check-icon path{ transition-delay:calc(var(--i, 0) * 180ms + .7s); stroke-dashoffset:0; }
+
+  /* ============ 10. STATUS BADGES ============ */
+  .status-badge{
+    display:inline-flex; align-items:center; gap:var(--space-2);
+    padding:.4rem .9rem; border-radius:999px; font-family:var(--font-mono); font-size:.85rem;
+    border:1px solid var(--success); color:var(--success);
+    opacity:0; transform:scale(.8); margin-top:var(--space-4);
+  }
+  .step-scene.is-active .status-badge{
+    animation:pop-in .5s var(--ease-pop) forwards; animation-delay:1.9s;
+  }
+  @keyframes pop-in{ 0%{ opacity:0; transform:scale(.8); } 60%{ opacity:1; transform:scale(1.06); } 100%{ opacity:1; transform:scale(1); } }
+
+  .chip{
+    display:inline-block; font-family:var(--font-mono); font-size:.75rem; font-weight:700;
+    padding:.25rem .65rem; border-radius:999px; border:1px solid currentColor; margin:.2rem .3rem .2rem 0;
+  }
+
+  /* ============ 11. PROTOCOL BOUNDARY CARDS ============ */
+  .boundary-card{
+    background:var(--bg-card); border:1px solid var(--border); border-radius:12px;
+    padding:var(--space-5);
+  }
+  .boundary-card h3{ font-size:1.05rem; font-weight:700; margin-bottom:var(--space-2); }
+  .boundary-card .conn-type{ color:var(--text-secondary); font-size:.85rem; margin-bottom:var(--space-3); }
+  .boundary-card.client-driver{ border-top:3px solid var(--client); }
+  .boundary-card.client-driver .chip{ color:var(--driver); }
+  .boundary-card.driver-browser{ border-top:3px solid var(--driver); }
+  .boundary-card.driver-browser .chip{ color:var(--browser); }
+
+  /* ============ 12. FOOTER ============ */
+  footer{
+    text-align:center; padding-block:var(--space-10) var(--space-8);
+    color:var(--text-muted); font-size:.9rem; border-top:1px solid var(--border);
+  }
+  footer strong{ color:var(--text-secondary); }
+
+  /* ============ 13. REVEAL ANIMATION ============ */
+  .reveal{ opacity:1; transform:none; }
+  .js-ready .reveal{
+    opacity:0; transform:translateY(24px);
+    transition:opacity .6s var(--ease-out), transform .6s var(--ease-out);
+  }
+  .js-ready .reveal.is-visible{ opacity:1; transform:translateY(0); }
+
+  /* ============ 14. REDUCED MOTION ============ */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{
+      animation-duration:.01ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.01ms !important;
+      scroll-behavior:auto !important;
+    }
+  }
+
+  /* ============ 15. RESPONSIVE ============ */
+  @media (min-width:640px){
+    .container{ padding-inline:2rem; }
+    .grid-3{ grid-template-columns:repeat(2,1fr); }
+    .boundary-grid{ grid-template-columns:repeat(2,1fr); }
+    .section{ padding-block:2.75rem; }
+  }
+  @media (min-width:1000px){
+    .grid-3{ grid-template-columns:repeat(3,1fr); }
+    .diagram-row{ grid-template-columns:repeat(3,1fr); }
+    .connector{ display:block; }
+    .section{ padding-block:3.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero" id="hero">
+  <div class="container hero-inner">
+    <span class="eyebrow">Playwright · Under the Hood</span>
+    <h1>How Playwright Actually Talks to a Browser</h1>
+    <p class="subhead">A language-agnostic RPC architecture, in 5 steps &mdash; from the moment your test runs to the moment the browser process disappears.</p>
+    <div class="scroll-cue">
+      <span>Scroll to follow the signal</span>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 6l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ LAYERS INTRO ============ -->
+  <section class="section section--alt-a" id="layers">
+    <div class="container">
+      <span class="eyebrow reveal">The Foundation</span>
+      <h2 class="reveal" style="margin-bottom:1rem;">The 3-Layer Architecture</h2>
+      <p class="step-lede reveal">Playwright relies on a language-agnostic RPC architecture divided into three distinct layers. Only the Browser Binary hasn't started yet &mdash; that happens in Step 2.</p>
+
+      <div class="grid-3">
+        <div class="layer-card reveal" data-layer="client">
+          <span class="tag">Layer 1</span>
+          <h3>The Client (Your Test)</h3>
+          <p>Written in TypeScript, Python, Java, or C#. This is your test code &mdash; where actions like the one below get called.</p>
+          <div class="code-card compact accent-client">
+<span class="tok-method">await page.click(</span><span class="tok-string">'#submit'</span><span class="tok-method">)</span>
+          </div>
+        </div>
+        <div class="layer-card reveal" data-layer="driver">
+          <span class="tag">Layer 2</span>
+          <h3>The Playwright Server (The Driver)</h3>
+          <p>A Node.js background process that acts as the translator between your test code and the browser's native protocol.</p>
+        </div>
+        <div class="layer-card reveal is-dormant" data-layer="browser">
+          <span class="tag">Layer 3</span>
+          <h3>The Browser Binary</h3>
+          <p>Chromium, Firefox, or WebKit, running as a separate OS process &mdash; dormant until the Driver launches it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STEP 1 ============ -->
+  <section class="section section--alt-b step-scene" id="step-1" data-step="1">
+    <div class="container">
+      <span class="step-badge reveal">01</span>
+      <span class="eyebrow reveal">Step 1</span>
+      <h2 class="step-heading reveal">Initialisation &amp; Handshake (The Driver Boot)</h2>
+      <p class="step-lede reveal">You run <code class="mono">npx playwright test</code>. The Client spawns a local background process executing the Playwright Driver, then establishes a persistent connection over <code class="mono">stdio</code> or a <code class="mono">WebSocket</code>. They exchange <code class="mono">JSON-RPC</code> handshake messages to verify API version compatibility.</p>
+
+      <div class="code-card accent-client reveal">
+        <span class="code-label">terminal</span>
+        <span class="terminal-line">$ npx playwright test</span>
+      </div>
+
+      <div class="diagram reveal">
+        <div class="diagram-row">
+          <div class="diagram-node" data-node="client"><div class="dot">CLI</div><span class="label">Client</span></div>
+          <div class="diagram-node" data-node="driver"><div class="dot">DRV</div><span class="label">Driver</span></div>
+          <div class="diagram-node is-dormant" data-node="browser"><div class="dot">BRW</div><span class="label">Browser</span></div>
+          <div class="connector">
+            <div class="connector-line" style="left:0; width:50%;"></div>
+            <span class="connector-label" style="left:8%;">spawn + handshake</span>
+            <span class="packet" data-leg="cd"></span>
+            <span class="packet" data-leg="dc"></span>
+          </div>
+        </div>
+        <p class="diagram-note">JSON-RPC handshake over stdio / WebSocket &mdash; version compatibility verified</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STEP 2 ============ -->
+  <section class="section section--alt-a step-scene" id="step-2" data-step="2">
+    <div class="container">
+      <span class="step-badge reveal">02</span>
+      <span class="eyebrow reveal">Step 2</span>
+      <h2 class="step-heading reveal">Browser Instantiation</h2>
+      <p class="step-lede reveal">Your code executes <code class="mono">chromium.launch()</code>. The Driver goes to your local <code class="mono">ms-playwright</code> folder and executes the raw browser binary, launching it with flags that expose its debugging port for <code class="mono">CDP</code> (or the Firefox/WebKit equivalents).</p>
+
+      <div class="code-card accent-driver reveal">
+        <span class="code-label">Client &rarr; Driver (JSON-RPC request)</span>
+<span class="tok-punc">{</span><span class="tok-key">"method"</span><span class="tok-punc">:</span> <span class="tok-string">"launchBrowser"</span><span class="tok-punc">,</span> <span class="tok-key">"params"</span><span class="tok-punc">:</span> <span class="tok-punc">{</span><span class="tok-key">"browserName"</span><span class="tok-punc">:</span> <span class="tok-string">"chromium"</span><span class="tok-punc">}</span><span class="tok-punc">}</span>
+      </div>
+
+      <div class="diagram reveal">
+        <div class="diagram-row">
+          <div class="diagram-node" data-node="client"><div class="dot">CLI</div><span class="label">Client</span></div>
+          <div class="diagram-node" data-node="driver"><div class="dot">DRV</div><span class="label">Driver</span></div>
+          <div class="diagram-node boot-in" data-node="browser"><div class="dot">BRW</div><span class="label">Browser</span></div>
+          <div class="connector">
+            <div class="connector-line" style="left:50%; width:50%;"></div>
+            <span class="connector-label" style="left:58%;">launch + open debug port</span>
+            <span class="packet" data-leg="db"></span>
+          </div>
+        </div>
+        <p class="diagram-note"><span class="chip" style="color:var(--browser);">--remote-debugging-port</span> &rarr; <span class="chip" style="color:var(--browser);">CDP</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STEP 3 (centerpiece) ============ -->
+  <section class="section section--alt-b step-scene" id="step-3" data-step="3">
+    <div class="container">
+      <span class="step-badge reveal">03</span>
+      <span class="eyebrow reveal">Step 3 &middot; The Centerpiece</span>
+      <h2 class="step-heading reveal">Test Execution (Command Transmission)</h2>
+      <p class="step-lede reveal">Let's trace exactly what happens when your test executes a single action, across all three layers.</p>
+
+      <div class="code-card accent-client reveal">
+        <span class="code-label">your test code</span>
+<span class="tok-method">await page.click(</span><span class="tok-string">'#submit'</span><span class="tok-method">)</span>
+      </div>
+
+      <div class="diagram reveal">
+        <div class="diagram-row">
+          <div class="diagram-node" data-node="client"><div class="dot">CLI</div><span class="label">Client</span></div>
+          <div class="diagram-node" data-node="driver"><div class="dot">DRV</div><span class="label">Driver</span></div>
+          <div class="diagram-node" data-node="browser"><div class="dot">BRW</div><span class="label">Browser</span></div>
+          <div class="connector">
+            <div class="connector-line" style="left:0; width:50%;"></div>
+            <div class="connector-line" style="left:50%; width:50%;"></div>
+            <span class="connector-label" style="left:6%;">serialize click</span>
+            <span class="connector-label" style="left:56%;">WebSocket / CDP</span>
+            <span class="packet" data-leg="cd-seq"></span>
+            <span class="packet" data-leg="db-seq"></span>
+          </div>
+        </div>
+        <p class="diagram-note">Client serializes &rarr; Driver translates &amp; routes &rarr; Browser executes</p>
+      </div>
+
+      <p class="step-lede reveal" style="margin-top:2rem;">Inside the browser, several actionability checks run before the click is ever dispatched:</p>
+      <ul class="checklist reveal">
+        <li style="--i:0;"><svg class="check-icon" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="9"/><path d="M6 11l3.5 3.5L16 8"/></svg> Locate the element</li>
+        <li style="--i:1;"><svg class="check-icon" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="9"/><path d="M6 11l3.5 3.5L16 8"/></svg> Scroll it into view</li>
+        <li style="--i:2;"><svg class="check-icon" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="9"/><path d="M6 11l3.5 3.5L16 8"/></svg> Actionability checks (visible, stable, enabled)</li>
+        <li style="--i:3;"><svg class="check-icon" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="9"/><path d="M6 11l3.5 3.5L16 8"/></svg> Dispatch trusted OS-level mouse event</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ STEP 4 ============ -->
+  <section class="section section--alt-a step-scene" id="step-4" data-step="4">
+    <div class="container">
+      <span class="step-badge reveal">04</span>
+      <span class="eyebrow reveal">Step 4</span>
+      <h2 class="step-heading reveal">The Response Loop</h2>
+      <p class="step-lede reveal">The browser registers the click and updates its state, sending a completion event via <code class="mono">CDP</code> back to the Driver. The Driver routes a success response to the Client over the same <code class="mono">stdio</code> stream, and your test's <code class="mono">Promise</code> resolves.</p>
+
+      <div class="diagram reveal">
+        <div class="diagram-row">
+          <div class="diagram-node" data-node="client"><div class="dot">CLI</div><span class="label">Client</span></div>
+          <div class="diagram-node" data-node="driver"><div class="dot">DRV</div><span class="label">Driver</span></div>
+          <div class="diagram-node" data-node="browser"><div class="dot">BRW</div><span class="label">Browser</span></div>
+          <div class="connector">
+            <div class="connector-line" style="left:50%; width:50%;"></div>
+            <div class="connector-line" style="left:0; width:50%;"></div>
+            <span class="connector-label" style="left:56%;">CDP completion event</span>
+            <span class="connector-label" style="left:6%;">stdio response</span>
+            <span class="packet" data-leg="bd-seq"></span>
+            <span class="packet" data-leg="dc-seq"></span>
+          </div>
+        </div>
+        <p class="diagram-note">Browser &rarr; Driver &rarr; Client, in reverse</p>
+      </div>
+
+      <span class="status-badge reveal">&#10003; Promise resolved</span>
+    </div>
+  </section>
+
+  <!-- ============ STEP 5 ============ -->
+  <section class="section section--alt-b step-scene" id="step-5" data-step="5">
+    <div class="container">
+      <span class="step-badge reveal">05</span>
+      <span class="eyebrow reveal">Step 5</span>
+      <h2 class="step-heading reveal">Teardown &amp; Process Cleanup</h2>
+      <p class="step-lede reveal">When the test finishes or fails, the Client sends a close message down the pipe. The Driver sends a terminal command to shut down the browser contexts, issues a <code class="mono">SIGTERM</code> signal to kill the browser binary, then exits itself &mdash; freeing every local resource it held.</p>
+
+      <div class="diagram reveal">
+        <div class="diagram-row">
+          <div class="diagram-node" data-node="client"><div class="dot">CLI</div><span class="label">Client</span></div>
+          <div class="diagram-node fade-out" data-node="driver"><div class="dot">DRV</div><span class="label">Driver</span></div>
+          <div class="diagram-node power-down" data-node="browser"><div class="dot">BRW</div><span class="label">Browser</span></div>
+          <div class="connector">
+            <div class="connector-line" style="left:0; width:50%;"></div>
+            <div class="connector-line" style="left:50%; width:50%;"></div>
+            <span class="connector-label" style="left:14%;">close</span>
+            <span class="connector-label" style="left:56%; color:var(--danger);">SIGTERM</span>
+            <span class="packet" data-leg="close"></span>
+            <span class="packet" data-leg="sigterm"></span>
+          </div>
+        </div>
+        <p class="diagram-note">Browser process terminated &middot; Driver process exits</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SUMMARY ============ -->
+  <section class="section section--alt-a" id="summary">
+    <div class="container">
+      <span class="eyebrow reveal">Reference</span>
+      <h2 class="reveal" style="margin-bottom:1rem;">Summary of Protocols Used</h2>
+      <p class="step-lede reveal">Two boundaries, two very different protocol shapes.</p>
+
+      <div class="boundary-grid grid-3 reveal" style="display:grid; gap:1.5rem;">
+        <div class="boundary-card client-driver">
+          <h3>Test Code &harr; Playwright Driver</h3>
+          <p class="conn-type">Local Pipe Stream / WebSockets</p>
+          <span class="chip">JSON-RPC</span>
+        </div>
+        <div class="boundary-card driver-browser">
+          <h3>Playwright Driver &harr; Browser Binary</h3>
+          <p class="conn-type">Local TCP / WebSocket Connection</p>
+          <span class="chip">CDP (Chromium)</span>
+          <span class="chip">Juggler (Firefox)</span>
+          <span class="chip">Playwright-WebKit</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>Five steps, three processes, one <strong>Promise</strong> &mdash; that's how <code class="mono">page.click()</code> reaches a real browser and back.</p>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js-ready');
+  try {
+    var revealObserver = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.2, rootMargin: '0px 0px -10% 0px' });
+    document.querySelectorAll('.reveal').forEach(function(el){ revealObserver.observe(el); });
+
+    var sceneObserver = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-active');
+          sceneObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.35 });
+    document.querySelectorAll('.step-scene').forEach(function(el){ sceneObserver.observe(el); });
+  } catch (e) {
+    /* animation is purely additive; content is already visible without it */
+  }
+</script>
+
+</body>
+</html>
